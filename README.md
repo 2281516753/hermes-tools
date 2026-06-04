@@ -1,84 +1,82 @@
 # Hermes Tools
 
-HTTP CONNECT 隧道转发工具，解决 ISP 深度包检测拦截非标准端口 TLS 流量的问题。
+HTTP CONNECT tunnel forwarding tool — bypasses ISP deep packet inspection (DPI) for non-standard port TLS traffic.
+
+> Despite the name, this tool works in **any** environment: Claude Code, Hermes Agent, or standalone use. It's just a Python script that creates TCP tunnels over HTTP CONNECT proxy.
 
 ---
 
-## 安装
+## Installation
 
-将脚本复制到 `~/.local/bin/` 目录下，并确保该目录在 `PATH` 中：
+Copy the script to `~/.local/bin/` and ensure that directory is in your `PATH`:
 
 ```bash
 cp hermes-email-tunnel ~/.local/bin/
 chmod +x ~/.local/bin/hermes-email-tunnel
 ```
 
-### 依赖
+### Dependencies
 
 - Python 3.6+
-- 本地 HTTP 代理（如 mihomo / Clash，默认监听 `127.0.0.1:7890`）
+- A local HTTP proxy (e.g., mihomo / Clash, default listening on `127.0.0.1:7890`)
 
-> 如需修改代理地址，编辑脚本中的 `PROXY` 变量。
-
----
-
-## 使用场景
-
-某些 ISP 会对非标准端口的 TLS 流量进行深度包检测（DPI）并拦截。例如，QQ 邮箱的 IMAP/SMTP 服务使用 993/465 端口，在部分网络环境下 TLS 握手会被 ISP 阻断，导致邮件客户端无法连接。
-
-`hermes-email-tunnel` 通过 HTTP CONNECT 隧道将本地流量经由代理转发，绕过 ISP 的 DPI 拦截：
-
-```
-本地应用 → localhost:本地端口 → HTTP CONNECT 隧道 → 代理 → 目标服务器
-```
-
-代理与目标服务器之间走的是标准 HTTP 代理协议，ISP 看到的只是普通的 HTTP CONNECT 请求，不会触发对非标准端口 TLS 的检测。
+> To change the proxy address, edit the `PROXY` variable in the script.
 
 ---
 
-## 用法示例
+## Use Case
 
-### 启动隧道
+Some ISPs perform deep packet inspection (DPI) on non-standard port TLS traffic and block it. For example, QQ Mail's IMAP/SMTP services use ports 993/465 — in some network environments the TLS handshake gets blocked by the ISP, preventing email clients from connecting.
+
+`hermes-email-tunnel` forwards local traffic through an HTTP CONNECT tunnel via your proxy, bypassing ISP DPI:
+
+```
+Local App → localhost:port → HTTP CONNECT Tunnel → Proxy → Target Server
+```
+
+Between the proxy and target server, traffic looks like normal HTTP CONNECT requests. The ISP sees nothing unusual and doesn't trigger the non-standard-port TLS detection.
+
+---
+
+## Usage
+
+### Start tunnels
 
 ```bash
-# 将本地 11443 端口转发到 QQ 邮箱 IMAP 服务器 (imap.qq.com:993)
+# Forward local port 11443 → QQ Mail IMAP (imap.qq.com:993)
 hermes-email-tunnel 11443 imap.qq.com 993
 
-# 将本地 10465 端口转发到 QQ 邮箱 SMTP 服务器 (smtp.qq.com:465)
+# Forward local port 10465 → QQ Mail SMTP (smtp.qq.com:465)
 hermes-email-tunnel 10465 smtp.qq.com 465
 ```
 
-启动后终端会显示：
+Output:
 
 ```
-隧道: 127.0.0.1:11443 → imap.qq.com:993
-隧道: 127.0.0.1:10465 → smtp.qq.com:465
+Tunnel: 127.0.0.1:11443 → imap.qq.com:993
+Tunnel: 127.0.0.1:10465 → smtp.qq.com:465
 ```
 
-### 配置应用指向 localhost
+### Configure apps to use localhost
 
-在邮件客户端或其他应用中将服务器地址改为 `127.0.0.1`，端口改为本地转发端口：
-
-| 服务 | 原始地址 | 隧道端口 |
-|------|----------|----------|
+| Service | Original Address | Tunnel Port |
+|---------|-----------------|-------------|
 | IMAP | `imap.qq.com:993` | `127.0.0.1:11443` |
 | SMTP | `smtp.qq.com:465` | `127.0.0.1:10465` |
 
-注意：TLS/SSL 仍然启用，因为隧道只是转发加密流量，证书验证不受影响。
+TLS/SSL stays enabled — the tunnel only forwards encrypted traffic; certificate verification is unaffected.
 
 ---
 
-## systemd 服务化
+## systemd Service
 
-创建 systemd 服务文件以实现开机自启和后台运行。
+### 1. Create service file
 
-### 1. 创建服务文件
-
-`/etc/systemd/system/hermes-email-tunnel@.service`：
+`/etc/systemd/system/hermes-email-tunnel@.service`:
 
 ```ini
 [Unit]
-Description=Hermes Email Tunnel for %i
+Description=Email Tunnel for %i
 After=network-online.target
 Wants=network-online.target
 
@@ -93,31 +91,27 @@ User=YOUR_USER
 WantedBy=multi-user.target
 ```
 
-> 将 `YOUR_USER` 替换为实际用户名。
+> Replace `YOUR_USER` with your actual username.
 
-### 2. 创建实例配置文件
-
-`/etc/hermes-tunnel/` 目录下存放各隧道实例的配置：
+### 2. Create instance configs
 
 ```bash
 sudo mkdir -p /etc/hermes-tunnel
 ```
 
-`/etc/hermes-tunnel/imap@.conf`：
-
+`/etc/hermes-tunnel/imap@.conf`:
 ```
 11443 imap.qq.com 993
 ```
 
-`/etc/hermes-tunnel/smtp@.conf`：
-
+`/etc/hermes-tunnel/smtp@.conf`:
 ```
 10465 smtp.qq.com 465
 ```
 
-### 3. 使用包装脚本
+### 3. Wrapper script
 
-创建 `/usr/local/bin/hermes-tunnel-wrapper`：
+`/usr/local/bin/hermes-tunnel-wrapper`:
 
 ```bash
 #!/bin/bash
@@ -130,13 +124,12 @@ else
 fi
 ```
 
-修改服务文件中的 `ExecStart` 为：
-
+Update the service file's `ExecStart`:
 ```
 ExecStart=/usr/local/bin/hermes-tunnel-wrapper %i
 ```
 
-### 4. 启用服务
+### 4. Enable services
 
 ```bash
 sudo systemctl daemon-reload
@@ -146,12 +139,28 @@ sudo systemctl start hermes-email-tunnel@imap
 sudo systemctl start hermes-email-tunnel@smtp
 ```
 
-### 5. 查看状态
+### 5. Check status
 
 ```bash
 sudo systemctl status hermes-email-tunnel@imap
 sudo systemctl status hermes-email-tunnel@smtp
 ```
+
+---
+
+## Related Projects
+
+- [claude-code-pitfalls](https://github.com/2281516753/hermes-pitfalls) — Claude Code on WSL2 pitfalls & solutions
+- [wsl-dev-setup](https://github.com/2281516753/wsl-dev-setup) — WSL2 dev environment one-click setup
+- [hermes-setup-guide](https://github.com/2281516753/hermes-setup-guide) — Claude Code installation guide
+
+---
+
+## Author
+
+Wang Jiong (王炯) — Network Engineering student.
+
+[GitHub](https://github.com/2281516753)
 
 ---
 
