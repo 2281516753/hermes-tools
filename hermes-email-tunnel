@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 """HTTP CONNECT 隧道转发：本地端口 → mihomo HTTP 代理 → 目标"""
-import socket, sys, threading, select
+import socket
+import sys
+import threading
+import select
+import signal
+import time
+from datetime import datetime
 
 PROXY = ("127.0.0.1", 7890)
+_conn_count = 0
+_lock = threading.Lock()
+
+def log(msg):
+    """Thread-safe log with timestamp."""
+    ts = datetime.now().strftime("%H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
 
 def http_connect(target_host, target_port):
     sock = socket.create_connection(PROXY, timeout=10)
+    sock.settimeout(30)
     req = f"CONNECT {target_host}:{target_port} HTTP/1.0\r\nHost: {target_host}:{target_port}\r\n\r\n"
     sock.sendall(req.encode())
     resp = b""
@@ -19,10 +33,18 @@ def http_connect(target_host, target_port):
     return sock
 
 def handle(client, target_host, target_port):
+    global _conn_count
+    with _lock:
+        _conn_count += 1
+        cid = _conn_count
+    log(f"#{cid} NEW {target_host}:{target_port}")
     try:
         remote = http_connect(target_host, target_port)
     except Exception as e:
+        log(f"#{cid} PROXY-ERR {e}")
         client.close()
+        with _lock:
+            _conn_count -= 1
         return
     # Bidirectional relay
     sockets = [client, remote]
@@ -42,16 +64,31 @@ def handle(client, target_host, target_port):
     finally:
         client.close()
         remote.close()
+        with _lock:
+            _conn_count -= 1
+        log(f"#{cid} CLOSE")
 
 if __name__ == "__main__":
+    if len(sys.argv) < 4:
+        print(f"Usage: {sys.argv[0]} <local_port> <target_host> <target_port> [--proxy host:port]")
+        print(f"Example: {sys.argv[0]} 11993 imap.qq.com 993 --proxy 127.0.0.1:7890")
+        sys.exit(1)
     local_port = int(sys.argv[1])
     target_host = sys.argv[2]
     target_port = int(sys.argv[3])
+
+    # Optional proxy override
+    if "--proxy" in sys.argv:
+        idx = sys.argv.index("--proxy")
+        proxy_parts = sys.argv[idx + 1].split(":")
+        PROXY = (proxy_parts[0], int(proxy_parts[1]))
+
     server = socket.socket()
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(("127.0.0.1", local_port))
     server.listen(5)
-    print(f"隧道: 127.0.0.1:{local_port} → {target_host}:{target_port}")
+    signal.signal(signal.SIGINT, lambda *_: (print(f"\nShutting down tunnel..."), sys.exit(0)))
+    log(f"LISTEN 127.0.0.1:{local_port} → {target_host}:{target_port}")
     while True:
         client, _ = server.accept()
         t = threading.Thread(target=handle, args=(client, target_host, target_port), daemon=True)
